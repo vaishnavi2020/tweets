@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>Live Tweets Dashboard with Auto Flags</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        /* Reset and base */
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            margin: 0; 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f5f7fa;
+            color: #333;
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* Sidebar styling */
+        #sidebar {
+            width: 300px;
+            background-color: #2c3e50;
+            color: #ecf0f1;
+            padding: 25px 30px;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-start;
+            box-shadow: 2px 0 5px rgba(0,0,0,0.1);
+        }
+        #sidebar h2 {
+            margin-top: 0;
+            font-weight: 700;
+            margin-bottom: 15px;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 10px;
+        }
+        #sidebar p {
+            line-height: 1.5;
+            font-size: 0.9rem;
+            margin-bottom: 15px;
+        }
+        #sidebar ul {
+            padding-left: 20px;
+        }
+        #sidebar ul li {
+            margin-bottom: 8px;
+            font-size: 0.9rem;
+        }
+        #sidebar a {
+            color: #3498db;
+            text-decoration: none;
+        }
+        #sidebar a:hover {
+            text-decoration: underline;
+        }
+
+        /* Main content */
+        #main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 30px;
+            overflow-y: auto;
+        }
+
+        h1 {
+            margin-top: 0;
+            font-weight: 700;
+            color: #34495e;
+        }
+
+        /* Tweets container */
+        #tweets {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 3px 6px rgba(0,0,0,0.1);
+            max-height: 350px;
+            overflow-y: auto;
+            padding: 15px 20px;
+            margin-bottom: 40px;
+            font-size: 1rem;
+        }
+        .tweet {
+            padding: 12px 0;
+            border-bottom: 1px solid #eee;
+        }
+        .tweet:last-child {
+            border-bottom: none;
+        }
+        .tweet strong {
+            color: #2980b9;
+        }
+        .tweet-time {
+            color: #999;
+            font-size: 0.85rem;
+            margin-left: 8px;
+            font-weight: 500;
+        }
+        .sentiment {
+            font-weight: 600;
+            padding: 2px 7px;
+            border-radius: 15px;
+            font-size: 0.85rem;
+            margin-top: 5px;
+            display: inline-block;
+        }
+        .positive {
+            color: #27ae60;
+            background-color: #d4f7d1;
+        }
+        .neutral {
+            color: #7f8c8d;
+            background-color: #e0e6e8;
+        }
+        .negative {
+            color: #c0392b;
+            background-color: #f7d1d1;
+        }
+
+        /* Flag label */
+        .flag-label {
+            font-weight: 600;
+            padding: 3px 10px;
+            border-radius: 12px;
+            margin-left: 10px;
+            background-color: #f39c12;
+            color: white;
+            font-size: 0.85rem;
+            display: inline-block;
+        }
+
+        /* Chart container */
+        #chart-container {
+            max-width: 450px;
+            margin: auto;
+        }
+        h2.chart-title {
+            color: #34495e;
+            margin-bottom: 15px;
+            font-weight: 700;
+            text-align: center;
+        }
+
+        /* Scrollbar styling */
+        #tweets::-webkit-scrollbar {
+            width: 8px;
+        }
+        #tweets::-webkit-scrollbar-thumb {
+            background: #bdc3c7;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div id="sidebar">
+        <h2>Project Insights</h2>
+        <p>This dashboard streams live tweets and displays real-time sentiment analysis with automatic flagging based on tweet content.</p>
+        <ul>
+            <li>✅ Sentiment classified as <strong>Positive</strong>, <strong>Neutral</strong>, or <strong>Negative</strong>.</li>
+            <li>⚡️ Tweets updated live using <em>WebSocket</em> technology (Socket.IO).</li>
+            <li>🚩 Tweets automatically flagged as <em>Spam</em>, <em>Important</em>, or <em>Review Needed</em> based on content.</li>
+            <li>📊 Sentiment distribution visualized as a pie chart, updating dynamically.</li>
+            <li>🕒 Tweets display local timestamp for better tracking.</li>
+            <li>🔄 Backend pipeline built with Kafka, Flask-SocketIO, and Cassandra DB.</li>
+        </ul>
+    </div>
+
+    <div id="main-content">
+        <h1>Live Tweets Feed</h1>
+        <div id="tweets">Waiting for tweets...</div>
+
+        <h2 class="chart-title">Sentiment Distribution (Live)</h2>
+        <div id="chart-container">
+            <canvas id="sentimentPieChart"></canvas>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+
+        // Sentiment counts
+        const sentimentCounts = {
+            positive: 0,
+            neutral: 0,
+            negative: 0,
+        };
+
+        const labelToKey = {
+            "Positive": "positive",
+            "Neutral": "neutral",
+            "Negative": "negative"
+        };
+
+        // Setup Chart.js Pie Chart
+        const ctx = document.getElementById('sentimentPieChart').getContext('2d');
+        const pieChart = new Chart(ctx, {
+            type: 'pie',
+            data: {
+                labels: ['Positive', 'Neutral', 'Negative'],
+                datasets: [{
+                    data: [0, 0, 0],
+                    backgroundColor: ['#27ae60', '#7f8c8d', '#c0392b']
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: {
+                            font: {
+                                size: 14,
+                                weight: '600'
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        function updatePieChart() {
+            pieChart.data.datasets[0].data = [
+                sentimentCounts.positive,
+                sentimentCounts.neutral,
+                sentimentCounts.negative
+            ];
+            pieChart.update();
+        }
+
+        // Function to determine automatic flags based on tweet content
+        function getFlagForTweet(tweet) {
+            const text = tweet.text.toLowerCase();
+
+            // Spam example: URLs or spammy words
+            if (text.includes("buy now") || text.includes("free") || text.includes("http")) {
+                return "Spam";
+            }
+
+            // Important example: contains #breaking or @yourcompany (customize as needed)
+            if (text.includes("#breaking") || text.includes("@yourcompany")) {
+                return "Important";
+            }
+
+            // Review needed: negative sentiment and words like "fail", "error"
+            if (tweet.sentiment_label === "Negative" && (text.includes("fail") || text.includes("error"))) {
+                return "Review Needed";
+            }
+
+            return null; // no flag
+        }
+
+        socket.on('new_tweet', function (tweet) {
+            const tweetsContainer = document.getElementById("tweets");
+
+            if (tweetsContainer.innerText.includes("Waiting")) {
+                tweetsContainer.innerHTML = "";
+            }
+
+            // Format local time nicely
+            const tweetTime = new Date(tweet.created_at).toLocaleTimeString();
+
+            const tweetElement = document.createElement("div");
+            tweetElement.classList.add('tweet');
+
+            // Safe sentiment label & class
+            const label = tweet.sentiment_label || "Unknown";
+            let sentimentClass = 'neutral'; // default
+            if (label.toLowerCase() === 'positive') sentimentClass = 'positive';
+            else if (label.toLowerCase() === 'negative') sentimentClass = 'negative';
+
+            // Get automatic flag
+            const flag = getFlagForTweet(tweet);
+            let flagHtml = "";
+            if (flag) {
+                flagHtml = `<span class="flag-label">${flag}</span>`;
+            }
+
+            tweetElement.innerHTML = `
+                <strong>@${tweet.user.screen_name}</strong> 
+                <span class="tweet-time">[${tweetTime}]</span>:<br>
+                ${tweet.text}<br>
+                <span class="sentiment ${sentimentClass}">${label}</span>
+                ${flagHtml}
+            `;
+
+            // Add newest tweet on top
+            tweetsContainer.insertBefore(tweetElement, tweetsContainer.firstChild);
+
+            // Keep max 50 tweets for performance
+            if (tweetsContainer.childElementCount > 50) {
+                tweetsContainer.removeChild(tweetsContainer.lastChild);
+            }
+
+            // Update sentiment counts & chart
+            if (labelToKey[label]) {
+                sentimentCounts[labelToKey[label]]++;
+                updatePieChart();
+            }
+        });
+    </script>
+</body>
+</html>
