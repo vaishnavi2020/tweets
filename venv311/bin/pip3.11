@@ -1,4 +1,4 @@
-#!/Users/tejasrielabotharam/Downloads/sentiment_analysis_pipeline/venv311/bin/python3.11
+#!/Users/tejasrielabotharam/Downloads/tweets/venv311/bin/python3.11
 # -*- coding: utf-8 -*-
 import re
 import sys
